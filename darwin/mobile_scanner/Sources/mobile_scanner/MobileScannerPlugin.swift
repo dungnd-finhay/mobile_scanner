@@ -413,7 +413,32 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                 message: error.localizedDescription, details: nil))
             return
         }
-        captureSession!.sessionPreset = AVCaptureSession.Preset.photo
+        // Set session preset with priority: 4K > 1080p > high > photo
+        if captureSession!.canSetSessionPreset(.hd4K3840x2160) {
+            captureSession!.sessionPreset = .hd4K3840x2160
+        } else if captureSession!.canSetSessionPreset(.hd1920x1080) {
+            captureSession!.sessionPreset = .hd1920x1080
+        } else if captureSession!.canSetSessionPreset(.high) {
+            captureSession!.sessionPreset = .high
+        } else {
+            captureSession!.sessionPreset = .photo
+        }
+        
+        // Set auto focus and default zoom after device is initialized
+        do {
+            try device.lockForConfiguration()
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            }
+            let defaultZoom: CGFloat = 1.2
+            if device.activeFormat.videoMaxZoomFactor >= defaultZoom {
+                device.videoZoomFactor = defaultZoom
+            }
+            device.unlockForConfiguration()
+        } catch {
+            // Ignore error
+        }
+
 
         // Add video output
         let videoOutput = AVCaptureVideoDataOutput()
