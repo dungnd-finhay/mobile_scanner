@@ -360,11 +360,15 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
 #endif
         
         // Open the camera device
+#if os(iOS)
+        device = getBestCameraForQRScan(position: position)
+#else
         if #available(macOS 10.15, *) {
             device = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera], mediaType: .video, position: position).devices.first
         } else {
             device = AVCaptureDevice.devices(for: .video).filter({$0.position == position}).first
         }
+#endif
         
         if (device == nil) {
             result(FlutterError(code: MobileScannerErrorCodes.NO_CAMERA_ERROR,
@@ -424,11 +428,17 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             captureSession!.sessionPreset = .photo
         }
         
-        // Set auto focus and default zoom after device is initialized
+        // Set auto focus, auto exposure, focus range restriction and default zoom after device is initialized
         do {
             try device.lockForConfiguration()
             if device.isFocusModeSupported(.continuousAutoFocus) {
                 device.focusMode = .continuousAutoFocus
+            }
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+            if device.isAutoFocusRangeRestrictionSupported {
+                device.autoFocusRangeRestriction = .near
             }
             let defaultZoom: CGFloat = 1.2
             if device.activeFormat.videoMaxZoomFactor >= defaultZoom {
@@ -785,6 +795,58 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
         registry.unregisterTexture(textureId)
         textureId = nil
     }
+
+#if os(iOS)
+    /// Returns the best camera for QR scanning based on device capability.
+    /// Pro devices (iPhone 13 Pro and newer) prioritize the ultra-wide camera for better
+    /// close-range scanning. Other devices use the standard wide-angle camera.
+    private func getBestCameraForQRScan(position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+        if #available(iOS 13.0, *), position == .back {
+            let deviceTypes: [AVCaptureDevice.DeviceType]
+            if isProiPhoneDevice() {
+                deviceTypes = [.builtInUltraWideCamera, .builtInWideAngleCamera, .builtInTelephotoCamera]
+            } else {
+                deviceTypes = [.builtInWideAngleCamera, .builtInTelephotoCamera]
+            }
+
+            let discoverySession = AVCaptureDevice.DiscoverySession(
+                deviceTypes: deviceTypes,
+                mediaType: .video,
+                position: position
+            )
+
+            for deviceType in deviceTypes {
+                if let found = discoverySession.devices.first(where: { $0.deviceType == deviceType }) {
+                    return found
+                }
+            }
+        }
+
+        return AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera],
+            mediaType: .video,
+            position: position
+        ).devices.first
+    }
+
+    /// Returns true if this is an iPhone Pro or Pro Max (iPhone 13 Pro and newer).
+    private func isProiPhoneDevice() -> Bool {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let machineMirror = Mirror(reflecting: systemInfo.machine)
+        let identifier = machineMirror.children.reduce("") { identifier, element in
+            guard let value = element.value as? Int8, value != 0 else { return identifier }
+            return identifier + String(UnicodeScalar(UInt8(value)))
+        }
+        let proModels = [
+            "iPhone14,2", "iPhone14,3", // iPhone 13 Pro, 13 Pro Max
+            "iPhone15,2", "iPhone15,3", // iPhone 14 Pro, 14 Pro Max
+            "iPhone16,1", "iPhone16,2", // iPhone 15 Pro, 15 Pro Max
+            "iPhone17,1", "iPhone17,2"  // iPhone 16 Pro, 16 Pro Max
+        ]
+        return proModels.contains(identifier)
+    }
+#endif
 
     func analyzeImage(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
         // The iOS Simulator cannot use some of the GPU features that are required for the Vision API.
